@@ -56,11 +56,29 @@ def build_update_message(
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
-            f"前面還有 {remaining} 位！"
+            f"前面還有 {remaining} 位，請準備前往！"
+        )
+    elif remaining <= 5:
+        return (
+            f"📢 即將輪到你\n"
+            f"🏥 {hospital_name}\n"
+            f"{sub_dept} - {doctor_name}\n"
+            f"目前看到第 {current_number} 號\n"
+            f"你的號碼是 {appointment_number} 號\n"
+            f"前面還有 {remaining} 位"
+        )
+    elif remaining <= 10:
+        return (
+            f"📋 看診進度更新\n"
+            f"🏥 {hospital_name}\n"
+            f"{sub_dept} - {doctor_name}\n"
+            f"目前看到第 {current_number} 號\n"
+            f"你的號碼是 {appointment_number} 號\n"
+            f"前面還有 {remaining} 位，可以準備出發"
         )
     else:
         return (
-            f"📢 看診進度更新\n"
+            f"📋 看診進度更新\n"
             f"🏥 {hospital_name}\n"
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"

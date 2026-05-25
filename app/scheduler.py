@@ -92,6 +92,9 @@ async def _check_dept(db, hospital_code: str, dept_code: str):
                 )
                 continue
 
+            if not _should_notify(remaining, sub["last_notified_number"], doc.current_number):
+                continue
+
             msg = build_update_message(
                 sub["hospital_name"], doc.doctor_name, doc.sub_dept,
                 doc.current_number, sub["appointment_number"],
@@ -104,6 +107,36 @@ async def _check_dept(db, hospital_code: str, dept_code: str):
             )
 
     await db.commit()
+
+
+def _should_notify(remaining: int, last_notified: int, current: int) -> bool:
+    """Decide whether to send a push notification based on how many people
+    are ahead of the user.
+
+    Rules:
+      - remaining <= 0  → always notify (it's your turn)
+      - remaining 1~5   → notify every number change
+      - remaining 6~10  → notify every 3 numbers
+      - remaining 11~20 → notify every 5 numbers
+      - remaining > 20  → notify every 10 numbers
+      - first notification (last_notified == 0) → always notify
+    """
+    if last_notified == 0:
+        return True
+    if remaining <= 0:
+        return True
+    if remaining <= 5:
+        return True
+
+    advanced = current - last_notified
+    if advanced <= 0:
+        return False
+
+    if remaining <= 10:
+        return advanced >= 3
+    if remaining <= 20:
+        return advanced >= 5
+    return advanced >= 10
 
 
 def start_scheduler():
