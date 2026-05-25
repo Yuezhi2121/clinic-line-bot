@@ -10,6 +10,7 @@ class DoctorProgress:
     doctor_name: str
     current_number: int
     next_number: str
+    status: str = ""
 
 
 def get_current_time_code() -> str:
@@ -58,17 +59,30 @@ class HospitalScraper(ABC):
         self, branch_name: str, dept_name: str, time_code: str, doctors: list[DoctorProgress]
     ) -> str:
         time_label = TIME_CODE_LABELS.get(time_code, "")
+        now = datetime.now()
+        ts = now.strftime("%H:%M")
+
         if not doctors:
-            return f"目前 {branch_name} {dept_name}（{time_label}）沒有看診資料。"
+            return (
+                f"目前 {branch_name} {dept_name}（{time_label}）沒有看診資料。\n"
+                f"🕐 查詢時間：{ts}"
+            )
 
         lines = [f"📋 {branch_name} {dept_name}（{time_label}）看診進度\n"]
         for d in doctors:
-            status = f"目前第 {d.current_number} 號" if d.current_number else "尚未開始"
+            if d.status:
+                status_text = f"⛔ {d.status}"
+            elif d.current_number:
+                status_text = f"目前第 {d.current_number} 號"
+            else:
+                status_text = "⏳ 尚未開始"
+
             next_info = f"（下一位：{d.next_number}）" if d.next_number else ""
             lines.append(f"🔹 {d.sub_dept} - {d.doctor_name}")
-            lines.append(f"   {status}{next_info}")
+            lines.append(f"   {status_text}{next_info}")
             if d.location:
                 lines.append(f"   📍 {d.location}")
             lines.append("")
 
+        lines.append(f"🕐 查詢時間：{ts}")
         return "\n".join(lines).strip()

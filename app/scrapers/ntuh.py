@@ -89,25 +89,40 @@ class NTUHScraper(HospitalScraper):
             doc_name = card.find("div", class_="clinic-doc-name")
             clinic_type = card.find("div", class_="clinic-type")
             number_div = card.find("div", class_="number")
+            order_div = card.find("div", class_="according-to-order")
 
             num_text = number_div.get_text(strip=True) if number_div else ""
-            current = _parse_number(num_text)
+            order_text = order_div.get_text(strip=True) if order_div else ""
+
+            number, status = _parse_status(num_text)
+            if not status and order_text:
+                for kw in ("休診", "暫停", "停診", "請假", "額滿"):
+                    if kw in order_text:
+                        status = order_text
+                        break
 
             results.append(
                 DoctorProgress(
                     sub_dept=clinic_type.get_text(strip=True) if clinic_type else "",
                     location=room.get_text(strip=True) if room else "",
                     doctor_name=doc_name.get_text(strip=True) if doc_name else "",
-                    current_number=current,
+                    current_number=number,
                     next_number="",
+                    status=status,
                 )
             )
 
         return results
 
 
-def _parse_number(raw: str) -> int:
+_STATUS_KEYWORDS = ("休診", "暫停", "停診", "請假", "額滿")
+
+
+def _parse_status(raw: str) -> tuple[int, str]:
     if not raw:
-        return 0
+        return 0, ""
+    for kw in _STATUS_KEYWORDS:
+        if kw in raw:
+            return 0, raw
     nums = re.findall(r"\d+", raw)
-    return int(nums[0]) if nums else 0
+    return (int(nums[0]) if nums else 0), ""

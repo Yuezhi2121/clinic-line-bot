@@ -184,22 +184,29 @@ async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -
         "time_code": time_code,
         "doctors_cache": [
             {"name": d.doctor_name, "sub_dept": d.sub_dept, "location": d.location,
-             "current": d.current_number, "next": d.next_number}
+             "current": d.current_number, "next": d.next_number, "status": d.status}
             for d in doctors
         ],
     })
     await _set_state(db, user_id, "QUERY_WAITING_FILTER", context)
 
+    active = [d for d in doctors if not d.status]
+    paused = [d for d in doctors if d.status]
     time_label = TIME_CODE_LABELS.get(time_code, "")
-    return (
-        f"📋 {hospital_name} {dept_name}（{time_label}）\n"
-        f"共有 {len(doctors)} 位醫師看診中\n\n"
-        f"請輸入以下任一條件來縮小範圍：\n"
-        f"  🔹 醫師姓名（如「王大明」）\n"
-        f"  🔹 門診科系（如「心臟科」）\n"
-        f"  🔹 診間編號（如「03診」）\n\n"
-        f"或輸入「全部」查看所有醫師進度"
+
+    summary = f"📋 {hospital_name} {dept_name}（{time_label}）\n"
+    summary += f"共 {len(doctors)} 位醫師"
+    if paused:
+        summary += f"（其中 {len(paused)} 位休診/暫停）"
+    summary += "\n\n"
+    summary += (
+        "請輸入以下任一條件來縮小範圍：\n"
+        "  🔹 醫師姓名（如「王大明」）\n"
+        "  🔹 門診科系（如「心臟科」）\n"
+        "  🔹 診間編號（如「03診」）\n\n"
+        "或輸入「全部」查看所有醫師進度"
     )
+    return summary
 
 
 async def _handle_query_filter(db, user_id: str, text: str, context: dict) -> str:
@@ -220,38 +227,21 @@ async def _handle_query_filter(db, user_id: str, text: str, context: dict) -> st
     })
 
     if text in ("全部", "all", "ALL"):
-        all_docs = [
-            DoctorProgress(
-                sub_dept=d["sub_dept"], location=d["location"],
-                doctor_name=d["name"], current_number=d["current"], next_number=d["next"],
-            )
-            for d in doctors_cache
-        ]
+        all_docs = _cache_to_progress(doctors_cache)
         return scraper.format_progress(hospital_name, dept_name, time_code, all_docs)
 
     filtered = [
         d for d in doctors_cache
-        if text in d["name"] or text in d["sub_dept"] or text in d.get("location", "")
+        if text in d["name"] or text in d["sub_dept"]
+           or text in d.get("location", "") or text in d.get("status", "")
     ]
 
     if not filtered:
-        all_docs = [
-            DoctorProgress(
-                sub_dept=d["sub_dept"], location=d["location"],
-                doctor_name=d["name"], current_number=d["current"], next_number=d["next"],
-            )
-            for d in doctors_cache
-        ]
+        all_docs = _cache_to_progress(doctors_cache)
         result = scraper.format_progress(hospital_name, dept_name, time_code, all_docs)
         return f"找不到符合「{text}」的結果，以下為全部看診進度：\n\n{result}"
 
-    matched_docs = [
-        DoctorProgress(
-            sub_dept=d["sub_dept"], location=d["location"],
-            doctor_name=d["name"], current_number=d["current"], next_number=d["next"],
-        )
-        for d in filtered
-    ]
+    matched_docs = _cache_to_progress(filtered)
     return scraper.format_progress(hospital_name, dept_name, time_code, matched_docs)
 
 
@@ -312,21 +302,30 @@ async def _handle_sub_dept(db, user_id: str, text: str, context: dict) -> str:
         time_label = TIME_CODE_LABELS.get(time_code, "")
         return f"{hospital_name} {dept_name}（{time_label}）目前沒有看診資料。\n請確認是否在看診時段內。"
 
+    active_doctors = [d for d in doctors if not d.status]
+    if not active_doctors:
+        time_label = TIME_CODE_LABELS.get(time_code, "")
+        lines = [f"📋 {hospital_name} {dept_name}（{time_label}）\n"]
+        lines.append("⚠️ 目前所有醫師皆休診或暫停看診：\n")
+        for d in doctors:
+            lines.append(f"  ⛔ {d.sub_dept} - {d.doctor_name}（{d.status}）")
+        return "\n".join(lines)
+
     context.update({
         "dept_code": dept_code,
         "dept_name": dept_name,
         "time_code": time_code,
         "doctors": [
-            {"name": d.doctor_name, "sub_dept": d.sub_dept, "current": d.current_number}
-            for d in doctors
+            {"name": d.doctor_name, "sub_dept": d.sub_dept, "current": d.current_number, "status": d.status}
+            for d in active_doctors
         ],
     })
     await _set_state(db, user_id, "WAITING_DOCTOR", context)
 
     lines = [f"📋 {hospital_name} {dept_name} 目前看診的醫師：\n"]
-    for i, d in enumerate(doctors, 1):
-        status = f"看到第 {d.current_number} 號" if d.current_number else "尚未開始"
-        lines.append(f"  {i}. {d.sub_dept} - {d.doctor_name}（{status}）")
+    for i, d in enumerate(active_doctors, 1):
+        status_text = f"看到第 {d.current_number} 號" if d.current_number else "⏳ 尚未開始"
+        lines.append(f"  {i}. {d.sub_dept} - {d.doctor_name}（{status_text}）")
 
     lines.append("\n請輸入醫師編號或姓名來選擇：")
     return "\n".join(lines)
@@ -496,6 +495,17 @@ async def _handle_status(db, user_id: str) -> str:
 
 
 # ========== Utilities ==========
+
+def _cache_to_progress(cache: list[dict]) -> list[DoctorProgress]:
+    return [
+        DoctorProgress(
+            sub_dept=d["sub_dept"], location=d.get("location", ""),
+            doctor_name=d["name"], current_number=d["current"],
+            next_number=d.get("next", ""), status=d.get("status", ""),
+        )
+        for d in cache
+    ]
+
 
 async def _set_state(db, user_id: str, state: str, context: dict):
     await db.execute(

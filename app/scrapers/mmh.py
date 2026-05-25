@@ -84,20 +84,29 @@ class MMHScraper(HospitalScraper):
             cells = row.find_all("td")
             if len(cells) < 4:
                 continue
+            raw_status = cells[3].get_text(strip=True)
+            number, status = _parse_status(raw_status)
             results.append(
                 DoctorProgress(
                     sub_dept=cells[0].get_text(strip=True),
                     location=cells[1].get_text(strip=True),
                     doctor_name=cells[2].get_text(strip=True),
-                    current_number=_parse_number(cells[3].get_text(strip=True)),
+                    current_number=number,
                     next_number="",
+                    status=status,
                 )
             )
         return results
 
 
-def _parse_number(raw: str) -> int:
+_STATUS_KEYWORDS = ("休診", "暫停", "停診", "請假", "額滿")
+
+
+def _parse_status(raw: str) -> tuple[int, str]:
     if not raw:
-        return 0
+        return 0, ""
+    for kw in _STATUS_KEYWORDS:
+        if kw in raw:
+            return 0, raw
     nums = re.findall(r"\d+", raw)
-    return int(nums[0]) if nums else 0
+    return (int(nums[0]) if nums else 0), ""
