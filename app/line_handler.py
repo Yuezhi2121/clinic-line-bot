@@ -75,7 +75,18 @@ def _build_dept_list_text(hospital_id: str) -> str:
     return "\n".join(f"  • {name}" for name in depts)
 
 
-async def handle_text_message(user_id: str, text: str) -> str:
+TRIGGER_KEYWORDS = frozenset({
+    "幫助", "help", "？", "?", "小幫手",
+    "醫院", "院區", "醫院列表",
+    "取消訂閱", "取消",
+    "狀態", "我的訂閱", "查詢訂閱",
+    "進度查詢", "查詢進度", "查詢",
+    "訂閱",
+})
+
+
+async def handle_text_message(user_id: str, text: str, is_group: bool = False) -> str | None:
+    """Return reply text, or None when the bot should stay silent."""
     text = text.strip()
     db = await get_db()
 
@@ -85,6 +96,9 @@ async def handle_text_message(user_id: str, text: str) -> str:
     row = await cursor.fetchone()
     state = row["state"] if row else "IDLE"
     context = json.loads(row["context"]) if row else {}
+
+    if is_group and text not in TRIGGER_KEYWORDS and state == "IDLE":
+        return None
 
     # --- Global commands ---
 

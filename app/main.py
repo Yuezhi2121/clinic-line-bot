@@ -5,6 +5,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import (
     FollowEvent,
+    JoinEvent,
     MessageEvent,
     TextMessageContent,
 )
@@ -75,16 +76,25 @@ async def callback(request: Request):
             except Exception as e:
                 logger.exception("Error sending welcome: %s", e)
 
+        elif isinstance(event, JoinEvent):
+            logger.info("Bot joined group/room")
+            try:
+                reply_message(event.reply_token, WELCOME_TEXT)
+            except Exception as e:
+                logger.exception("Error sending welcome to group: %s", e)
+
         elif isinstance(event, MessageEvent) and isinstance(
             event.message, TextMessageContent
         ):
             user_id = event.source.user_id
             text = event.message.text
-            logger.info("Message from %s: %s", user_id, text)
+            is_group = event.source.type in ("group", "room")
+            logger.info("Message from %s (group=%s): %s", user_id, is_group, text)
 
             try:
-                reply_text = await handle_text_message(user_id, text)
-                reply_message(event.reply_token, reply_text)
+                reply_text = await handle_text_message(user_id, text, is_group=is_group)
+                if reply_text is not None:
+                    reply_message(event.reply_token, reply_text)
             except Exception as e:
                 logger.exception("Error handling message: %s", e)
 
