@@ -20,11 +20,23 @@ _config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
 _all_hospital_names = get_all_hospital_names()
 
-HOSPITAL_LIST_TEXT = (
-    "🏥 可查詢的醫院 / 院區：\n\n"
-    + "\n".join(f"  {i}. {name}" for i, name in enumerate(_all_hospital_names, 1))
-    + "\n\n輸入醫院名稱即可選擇"
-)
+def _build_hospital_list() -> str:
+    from app.scrapers.registry import get_all_scrapers
+    lines = ["🏥 可查詢的醫院 / 院區：\n"]
+    for scraper in get_all_scrapers().values():
+        branches = list(scraper.get_branches().keys())
+        if len(branches) == 1:
+            lines.append(f"  🔹 {branches[0]}")
+        else:
+            lines.append(f"  🔹 {scraper.display_name}")
+            for b in branches:
+                lines.append(f"      {b}")
+    lines.append(f"\n共 {len(_all_hospital_names)} 個院區可查詢")
+    lines.append("輸入醫院名稱即可選擇")
+    return "\n".join(lines)
+
+
+HOSPITAL_LIST_TEXT = _build_hospital_list()
 
 WELCOME_TEXT = (
     "👋 嗨！我是看診進度小幫手！\n\n"
@@ -35,7 +47,8 @@ WELCOME_TEXT = (
     "📌 快速開始：\n\n"
     "🔍 查詢進度\n"
     "  輸入醫院名稱，例如：\n"
-    "  「林口長庚」「台大總院」「馬偕醫院」「臺安醫院」\n"
+    "  「林口長庚」「台大總院」「奇美醫院」\n"
+    "  「彰基」「光田」「慈濟」\n"
     "  ➜ 輸入科別 ➜ 輸入醫師姓名或診間篩選\n\n"
     "🔔 訂閱通知\n"
     "  輸入「訂閱」\n"
