@@ -39,13 +39,24 @@ def get_all_hospital_names() -> list[str]:
     return list(_hospital_lookup.keys())
 
 
+_CHAR_VARIANTS = {"臺": "台", "臺": "台"}
+
+
+def _normalize(text: str) -> str:
+    for old, new in _CHAR_VARIANTS.items():
+        text = text.replace(old, new)
+    return text
+
+
 def find_hospital(name: str) -> HospitalEntry | None:
     """Exact or fuzzy match a hospital name to a HospitalEntry."""
     if name in _hospital_lookup:
         return _hospital_lookup[name]
 
+    norm = _normalize(name)
     for key, entry in _hospital_lookup.items():
-        if name in key or key in name:
+        norm_key = _normalize(key)
+        if norm == norm_key or norm in norm_key or norm_key in norm:
             return entry
 
     return None
