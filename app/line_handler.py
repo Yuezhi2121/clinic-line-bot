@@ -17,22 +17,29 @@ logger = logging.getLogger(__name__)
 
 _config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-HELP_TEXT = (
-    "📖 指令說明\n\n"
-    "【查詢看診進度】\n"
-    "  輸入科別名稱，例如：\n"
+WELCOME_TEXT = (
+    "👋 嗨！我是林口長庚看診進度小幫手！\n\n"
+    "我可以幫你：\n"
+    "1️⃣ 即時查詢看診進度\n"
+    "2️⃣ 訂閱通知，快到你的號碼時自動提醒\n\n"
+    "━━━━━━━━━━━━━━━\n"
+    "📌 快速開始：\n\n"
+    "🔍 查詢進度\n"
+    "  直接輸入科別，例如：\n"
     "  「內科」「外科」「中醫」\n\n"
-    "【訂閱看診通知】\n"
-    "  輸入「訂閱」開始設定\n\n"
-    "【查看我的訂閱】\n"
-    "  輸入「狀態」或「我的訂閱」\n\n"
-    "【取消訂閱】\n"
-    "  輸入「取消」\n\n"
-    "【查看所有科別】\n"
-    "  輸入「科別」\n\n"
-    "【幫助】\n"
-    "  輸入「幫助」或「help」"
+    "🔔 訂閱通知\n"
+    "  輸入「訂閱」\n"
+    "  ➜ 選科別 ➜ 選醫師 ➜ 輸入你的號碼\n"
+    "  設定完成後，有進度更新就會通知你！\n\n"
+    "━━━━━━━━━━━━━━━\n"
+    "📖 所有指令：\n"
+    "  「科別」查看所有科別\n"
+    "  「狀態」查看我的訂閱\n"
+    "  「取消」取消訂閱\n"
+    "  「小幫手」顯示此說明\n"
 )
+
+HELP_TEXT = WELCOME_TEXT
 
 DEPT_LIST_TEXT = (
     "🏥 可查詢的科別：\n\n"
@@ -55,9 +62,9 @@ async def handle_text_message(user_id: str, text: str) -> str:
     context = json.loads(row["context"]) if row else {}
 
     # Commands that work in any state
-    if text in ("幫助", "help", "？", "?"):
+    if text in ("幫助", "help", "？", "?", "小幫手"):
         await _set_state(db, user_id, "IDLE", {})
-        return HELP_TEXT
+        return WELCOME_TEXT
 
     if text in ("科別", "看科別", "科別列表"):
         await _set_state(db, user_id, "IDLE", {})

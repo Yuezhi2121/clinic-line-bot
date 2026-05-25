@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import (
+    FollowEvent,
     MessageEvent,
     TextMessageContent,
 )
@@ -11,7 +12,7 @@ from linebot.v3.webhook import WebhookParser
 
 from app.config import LINE_CHANNEL_SECRET
 from app.database import close_db, get_db
-from app.line_handler import handle_text_message, reply_message
+from app.line_handler import handle_text_message, reply_message, WELCOME_TEXT
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
@@ -67,7 +68,14 @@ async def callback(request: Request):
         return {"status": "error", "detail": str(e)}
 
     for event in events:
-        if isinstance(event, MessageEvent) and isinstance(
+        if isinstance(event, FollowEvent):
+            logger.info("New follower: %s", event.source.user_id)
+            try:
+                reply_message(event.reply_token, WELCOME_TEXT)
+            except Exception as e:
+                logger.exception("Error sending welcome: %s", e)
+
+        elif isinstance(event, MessageEvent) and isinstance(
             event.message, TextMessageContent
         ):
             user_id = event.source.user_id
