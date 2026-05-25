@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import SCRAPE_INTERVAL_SECONDS
 from app.database import get_db
 from app.notifier import build_update_message, push_text
-from app.scraper import fetch_progress
+from app.scrapers.registry import get_scraper
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -33,10 +33,20 @@ async def check_and_notify():
 
 async def _check_dept(db, hospital_code: str, dept_code: str):
     """Check a single hospital+department and notify relevant subscribers."""
+    if ":" not in hospital_code:
+        logger.warning("Invalid hospital_code format: %s", hospital_code)
+        return
+
+    hospital_id, branch_code = hospital_code.split(":", 1)
+    scraper = get_scraper(hospital_id)
+    if not scraper:
+        logger.warning("No scraper found for hospital_id: %s", hospital_id)
+        return
+
     try:
-        doctors = await fetch_progress(hospital_code, dept_code)
+        doctors = await scraper.fetch_progress(branch_code, dept_code)
     except Exception:
-        logger.exception("Failed to fetch progress for hospital %s dept %s", hospital_code, dept_code)
+        logger.exception("Failed to fetch progress for %s dept %s", hospital_code, dept_code)
         return
 
     for doc in doctors:

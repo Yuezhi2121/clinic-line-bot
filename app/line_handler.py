@@ -9,36 +9,33 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from app.config import DEPARTMENTS, HOSPITALS, HOSPITAL_CODE_TO_NAME, LINE_CHANNEL_ACCESS_TOKEN
+from app.config import LINE_CHANNEL_ACCESS_TOKEN
 from app.database import get_db
-from app.scraper import fetch_progress, format_progress_message, _get_current_time_code, TIME_CODE_LABELS
+from app.scrapers.base import get_current_time_code, TIME_CODE_LABELS
+from app.scrapers.registry import find_hospital, get_all_hospital_names, get_scraper
 
 logger = logging.getLogger(__name__)
 
 _config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-HOSPITAL_LIST_TEXT = (
-    "🏥 可查詢的醫院：\n\n"
-    + "\n".join(f"  {i}. {name}" for i, name in enumerate(HOSPITALS, 1))
-    + "\n\n輸入醫院編號或名稱即可選擇"
-)
+_all_hospital_names = get_all_hospital_names()
 
-DEPT_LIST_TEXT = (
-    "🏥 可查詢的科別：\n\n"
-    + "\n".join(f"  • {name}" for name in DEPARTMENTS)
-    + "\n\n輸入科別名稱即可查詢"
+HOSPITAL_LIST_TEXT = (
+    "🏥 可查詢的醫院 / 院區：\n\n"
+    + "\n".join(f"  {i}. {name}" for i, name in enumerate(_all_hospital_names, 1))
+    + "\n\n輸入醫院名稱即可選擇"
 )
 
 WELCOME_TEXT = (
-    "👋 嗨！我是長庚看診進度小幫手！\n\n"
+    "👋 嗨！我是看診進度小幫手！\n\n"
     "我可以幫你：\n"
-    "1️⃣ 即時查詢各院區看診進度\n"
+    "1️⃣ 即時查詢各醫院看診進度\n"
     "2️⃣ 訂閱通知，快到你的號碼時自動提醒\n\n"
     "━━━━━━━━━━━━━━━\n"
     "📌 快速開始：\n\n"
     "🔍 查詢進度\n"
     "  輸入醫院名稱，例如：\n"
-    "  「林口長庚」「高雄長庚」「台北長庚」\n"
+    "  「林口長庚」「台大總院」「馬偕醫院」「臺安醫院」\n"
     "  ➜ 再輸入科別即可查看進度\n\n"
     "🔔 訂閱通知\n"
     "  輸入「訂閱」\n"
@@ -46,8 +43,7 @@ WELCOME_TEXT = (
     "  設定完成後，有進度更新就會通知你！\n\n"
     "━━━━━━━━━━━━━━━\n"
     "📖 所有指令：\n"
-    "  「醫院」查看所有院區\n"
-    "  「科別」查看所有科別\n"
+    "  「醫院」查看所有可查詢的醫院\n"
     "  「狀態」查看我的訂閱\n"
     "  「取消」取消訂閱\n"
     "  「小幫手」顯示此說明\n"
@@ -55,11 +51,18 @@ WELCOME_TEXT = (
 
 HELP_TEXT = WELCOME_TEXT
 
-_hospital_names = list(HOSPITALS.keys())
+
+def _build_dept_list_text(hospital_id: str) -> str:
+    scraper = get_scraper(hospital_id)
+    if not scraper:
+        return "請直接輸入科別名稱（如「內科」、「骨科」）"
+    depts = scraper.get_departments()
+    if not depts:
+        return "此醫院不需選擇科別，請直接輸入科別關鍵字（如「內科」、「骨科」）"
+    return "\n".join(f"  • {name}" for name in depts)
 
 
 async def handle_text_message(user_id: str, text: str) -> str:
-    """Process a text message and return a reply string."""
     text = text.strip()
     db = await get_db()
 
@@ -70,7 +73,7 @@ async def handle_text_message(user_id: str, text: str) -> str:
     state = row["state"] if row else "IDLE"
     context = json.loads(row["context"]) if row else {}
 
-    # --- Global commands (work in any state) ---
+    # --- Global commands ---
 
     if text in ("幫助", "help", "？", "?", "小幫手"):
         await _set_state(db, user_id, "IDLE", {})
@@ -79,10 +82,6 @@ async def handle_text_message(user_id: str, text: str) -> str:
     if text in ("醫院", "院區", "醫院列表"):
         await _set_state(db, user_id, "IDLE", {})
         return HOSPITAL_LIST_TEXT
-
-    if text in ("科別", "看科別", "科別列表"):
-        await _set_state(db, user_id, "IDLE", {})
-        return DEPT_LIST_TEXT
 
     if text in ("取消訂閱", "取消"):
         return await _handle_cancel(db, user_id)
@@ -111,127 +110,120 @@ async def handle_text_message(user_id: str, text: str) -> str:
     if state == "QUERY_WAITING_DEPT":
         return await _handle_query_dept_state(db, user_id, text, context)
 
-    # --- Default: try matching hospital name for quick query ---
+    # --- Default: try matching hospital name ---
 
-    hospital_code = _match_hospital(text)
-    if hospital_code:
-        hospital_name = HOSPITAL_CODE_TO_NAME[hospital_code]
-        context = {"hospital_code": hospital_code, "hospital_name": hospital_name}
-        await _set_state(db, user_id, "QUERY_WAITING_DEPT", context)
+    entry = _match_hospital(text)
+    if entry:
+        scraper = entry.scraper
+        hospital_code = f"{scraper.hospital_id}:{entry.branch_code}"
+        ctx = {"hospital_code": hospital_code, "hospital_name": entry.branch_name, "hospital_id": scraper.hospital_id}
+        await _set_state(db, user_id, "QUERY_WAITING_DEPT", ctx)
+        dept_text = _build_dept_list_text(scraper.hospital_id)
         return (
-            f"🏥 {hospital_name}\n\n"
+            f"🏥 {entry.branch_name}\n\n"
             f"請輸入要查詢的科別：\n\n"
-            + DEPT_LIST_TEXT
+            f"{dept_text}"
         )
-
-    # Try matching department name (use last hospital or default to 林口)
-    dept_code = _match_department(text)
-    if dept_code:
-        return await _handle_quick_query(db, user_id, text, dept_code)
 
     return (
         "我不太理解你的意思 😅\n\n"
         "💡 試試看：\n"
-        "  • 輸入醫院名稱（如「林口長庚」）\n"
-        "  • 輸入科別名稱（如「內科」）\n"
+        "  • 輸入醫院名稱（如「林口長庚」「台大總院」「馬偕醫院」）\n"
         "  • 輸入「小幫手」查看完整說明"
     )
 
 
 # ========== Quick Query ==========
 
-async def _handle_quick_query(db, user_id: str, text: str, dept_code: str) -> str:
-    """Quick query: if user has a previous hospital context, use it; otherwise default to 林口."""
-    cursor = await db.execute(
-        "SELECT context FROM user_state WHERE user_id = ?", (user_id,)
-    )
-    row = await cursor.fetchone()
-    prev_context = json.loads(row["context"]) if row else {}
-
-    hospital_code = prev_context.get("hospital_code", "3")
-    hospital_name = HOSPITAL_CODE_TO_NAME.get(hospital_code, "林口長庚")
-
-    dept_name = text
-    for name, code in DEPARTMENTS.items():
-        if code == dept_code:
-            dept_name = name
-            break
-
-    time_code = _get_current_time_code()
-    try:
-        doctors = await fetch_progress(hospital_code, dept_code, time_code)
-    except Exception:
-        logger.exception("Failed to fetch progress")
-        return "抱歉，目前無法取得看診進度，請稍後再試。"
-
-    return format_progress_message(hospital_name, dept_name, time_code, doctors)
-
-
 async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -> str:
-    """User selected a hospital, now waiting for department."""
-    dept_code = _match_department(text)
-    if not dept_code:
-        return f"找不到「{text}」這個科別。\n請重新輸入，或輸入「科別」查看所有科別。"
-
     hospital_code = context["hospital_code"]
     hospital_name = context["hospital_name"]
+    hospital_id = context.get("hospital_id", "")
 
+    scraper = get_scraper(hospital_id)
+    if not scraper:
+        await _set_state(db, user_id, "IDLE", {})
+        return "系統錯誤，請重新選擇醫院。"
+
+    _, branch_code = hospital_code.split(":", 1)
+
+    dept_code = _match_dept_for_scraper(scraper, text)
     dept_name = text
-    for name, code in DEPARTMENTS.items():
-        if code == dept_code:
-            dept_name = name
-            break
 
-    # Keep hospital context for future quick queries
-    await _set_state(db, user_id, "IDLE", {"hospital_code": hospital_code, "hospital_name": hospital_name})
+    if scraper.get_departments():
+        if not dept_code:
+            dept_text = _build_dept_list_text(hospital_id)
+            return f"找不到「{text}」這個科別。\n請重新輸入：\n\n{dept_text}"
+        for name, code in scraper.get_departments().items():
+            if code == dept_code:
+                dept_name = name
+                break
+    else:
+        dept_code = text
 
-    time_code = _get_current_time_code()
+    await _set_state(db, user_id, "IDLE", {
+        "hospital_code": hospital_code, "hospital_name": hospital_name, "hospital_id": hospital_id
+    })
+
+    time_code = get_current_time_code()
     try:
-        doctors = await fetch_progress(hospital_code, dept_code, time_code)
+        doctors = await scraper.fetch_progress(branch_code, dept_code, time_code)
     except Exception:
         logger.exception("Failed to fetch progress")
         return "抱歉，目前無法取得看診進度，請稍後再試。"
 
-    return format_progress_message(hospital_name, dept_name, time_code, doctors)
+    return scraper.format_progress(hospital_name, dept_name, time_code, doctors)
 
 
 # ========== Subscribe Flow ==========
 
 async def _handle_sub_hospital(db, user_id: str, text: str) -> str:
-    """Subscribe step 1: select hospital."""
-    hospital_code = _match_hospital(text)
-    if not hospital_code:
+    entry = _match_hospital(text)
+    if not entry:
         return f"找不到「{text}」這間醫院。\n請重新輸入，或輸入「醫院」查看所有院區。"
 
-    hospital_name = HOSPITAL_CODE_TO_NAME[hospital_code]
-    context = {"hospital_code": hospital_code, "hospital_name": hospital_name}
-    await _set_state(db, user_id, "SUB_WAITING_DEPT", context)
+    scraper = entry.scraper
+    hospital_code = f"{scraper.hospital_id}:{entry.branch_code}"
+    ctx = {"hospital_code": hospital_code, "hospital_name": entry.branch_name, "hospital_id": scraper.hospital_id}
+    await _set_state(db, user_id, "SUB_WAITING_DEPT", ctx)
 
+    dept_text = _build_dept_list_text(scraper.hospital_id)
     return (
-        f"✅ 已選擇 {hospital_name}\n\n"
+        f"✅ 已選擇 {entry.branch_name}\n\n"
         f"請輸入要訂閱的科別：\n\n"
-        + DEPT_LIST_TEXT
+        f"{dept_text}"
     )
 
 
 async def _handle_sub_dept(db, user_id: str, text: str, context: dict) -> str:
-    """Subscribe step 2: select department, then show doctors."""
-    dept_code = _match_department(text)
-    if not dept_code:
-        return f"找不到「{text}」這個科別。\n請重新輸入，或輸入「科別」查看所有科別。"
-
     hospital_code = context["hospital_code"]
     hospital_name = context["hospital_name"]
+    hospital_id = context.get("hospital_id", "")
 
+    scraper = get_scraper(hospital_id)
+    if not scraper:
+        await _set_state(db, user_id, "IDLE", {})
+        return "系統錯誤，請重新選擇醫院。"
+
+    _, branch_code = hospital_code.split(":", 1)
+
+    dept_code = _match_dept_for_scraper(scraper, text)
     dept_name = text
-    for name, code in DEPARTMENTS.items():
-        if code == dept_code:
-            dept_name = name
-            break
 
-    time_code = _get_current_time_code()
+    if scraper.get_departments():
+        if not dept_code:
+            dept_text = _build_dept_list_text(hospital_id)
+            return f"找不到「{text}」這個科別。\n請重新輸入：\n\n{dept_text}"
+        for name, code in scraper.get_departments().items():
+            if code == dept_code:
+                dept_name = name
+                break
+    else:
+        dept_code = text
+
+    time_code = get_current_time_code()
     try:
-        doctors = await fetch_progress(hospital_code, dept_code, time_code)
+        doctors = await scraper.fetch_progress(branch_code, dept_code, time_code)
     except Exception:
         logger.exception("Failed to fetch progress")
         return "抱歉，目前無法取得看診進度，請稍後再試。"
@@ -261,7 +253,6 @@ async def _handle_sub_dept(db, user_id: str, text: str, context: dict) -> str:
 
 
 async def _handle_waiting_doctor(db, user_id: str, text: str, context: dict) -> str:
-    """Subscribe step 3: select doctor."""
     doctors = context.get("doctors", [])
 
     selected = None
@@ -294,7 +285,6 @@ async def _handle_waiting_doctor(db, user_id: str, text: str, context: dict) -> 
 
 
 async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> str:
-    """Subscribe step 4: enter appointment number."""
     if not text.isdigit():
         return "請輸入數字的看診號碼，例如：「25」"
 
@@ -305,6 +295,7 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
     doctor_name = context["selected_doctor"]
     hospital_code = context["hospital_code"]
     hospital_name = context["hospital_name"]
+    hospital_id = context.get("hospital_id", "")
     dept_code = context["dept_code"]
     dept_name = context["dept_name"]
     sub_dept = context.get("selected_sub_dept", "")
@@ -325,7 +316,9 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
     )
     await db.commit()
 
-    await _set_state(db, user_id, "IDLE", {"hospital_code": hospital_code, "hospital_name": hospital_name})
+    await _set_state(db, user_id, "IDLE", {
+        "hospital_code": hospital_code, "hospital_name": hospital_name, "hospital_id": hospital_id
+    })
 
     current = 0
     for d in context.get("doctors", []):
@@ -437,30 +430,30 @@ async def _set_state(db, user_id: str, state: str, context: dict):
     await db.commit()
 
 
-def _match_hospital(text: str) -> str | None:
-    """Fuzzy match user input to a hospital code."""
-    if text in HOSPITALS:
-        return HOSPITALS[text]
+def _match_hospital(text: str):
+    """Match user input to a HospitalEntry from the registry."""
+    entry = find_hospital(text)
+    if entry:
+        return entry
 
-    # Match by number in list
     if text.isdigit():
         idx = int(text) - 1
-        if 0 <= idx < len(_hospital_names):
-            return HOSPITALS[_hospital_names[idx]]
-
-    for name, code in HOSPITALS.items():
-        if text in name or name in text:
-            return code
+        if 0 <= idx < len(_all_hospital_names):
+            return find_hospital(_all_hospital_names[idx])
 
     return None
 
 
-def _match_department(text: str) -> str | None:
-    """Fuzzy match user input to a department code."""
-    if text in DEPARTMENTS:
-        return DEPARTMENTS[text]
+def _match_dept_for_scraper(scraper, text: str) -> str | None:
+    """Match user input to a department code for a specific scraper."""
+    depts = scraper.get_departments()
+    if not depts:
+        return text
 
-    for name, code in DEPARTMENTS.items():
+    if text in depts:
+        return depts[text]
+
+    for name, code in depts.items():
         if text in name or name in text:
             return code
 
@@ -468,7 +461,6 @@ def _match_department(text: str) -> str | None:
 
 
 def reply_message(reply_token: str, text: str):
-    """Send a reply message using the LINE API."""
     with ApiClient(_config) as api_client:
         api = MessagingApi(api_client)
         api.reply_message(
