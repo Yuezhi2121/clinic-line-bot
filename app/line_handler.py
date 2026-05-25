@@ -110,8 +110,14 @@ async def handle_text_message(user_id: str, text: str, is_group: bool = False) -
         await _set_state(db, user_id, "IDLE", {})
         return HOSPITAL_LIST_TEXT
 
-    if text in ("取消訂閱", "取消"):
-        return await _handle_cancel(db, user_id)
+    if text == "取消":
+        if state != "IDLE":
+            await _set_state(db, user_id, "IDLE", {})
+            return "已取消目前的操作。\n\n輸入「進度查詢」或「訂閱」重新開始。"
+        return await _handle_cancel_sub(db, user_id)
+
+    if text == "取消訂閱":
+        return await _handle_cancel_sub(db, user_id)
 
     if text in ("狀態", "我的訂閱", "查詢訂閱"):
         return await _handle_status(db, user_id)
@@ -471,7 +477,7 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
 
 # ========== Cancel / Status ==========
 
-async def _handle_cancel(db, user_id: str) -> str:
+async def _handle_cancel_sub(db, user_id: str) -> str:
     cursor = await db.execute(
         "SELECT id, hospital_name, doctor_name, dept_name, appointment_number FROM subscriptions WHERE user_id = ?",
         (user_id,),
