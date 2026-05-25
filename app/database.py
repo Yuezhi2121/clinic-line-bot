@@ -14,21 +14,35 @@ async def get_db() -> aiosqlite.Connection:
 
 
 async def _init_tables(db: aiosqlite.Connection):
+    # Drop old tables if schema changed (safe for this app since data is transient)
+    cursor = await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscriptions'"
+    )
+    row = await cursor.fetchone()
+    if row and "hospital_code" not in (row[0] or ""):
+        await db.executescript("""
+            DROP TABLE IF EXISTS subscriptions;
+            DROP TABLE IF EXISTS clinic_status;
+        """)
+
     await db.executescript("""
         CREATE TABLE IF NOT EXISTS subscriptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
+            hospital_code TEXT NOT NULL,
+            hospital_name TEXT NOT NULL,
             dept_code TEXT NOT NULL,
             dept_name TEXT NOT NULL,
             doctor_name TEXT NOT NULL,
             appointment_number INTEGER NOT NULL,
             last_notified_number INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, doctor_name)
+            UNIQUE(user_id, hospital_code, doctor_name)
         );
 
         CREATE TABLE IF NOT EXISTS clinic_status (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hospital_code TEXT NOT NULL,
             dept_code TEXT NOT NULL,
             doctor_name TEXT NOT NULL,
             current_number INTEGER NOT NULL,
@@ -36,7 +50,7 @@ async def _init_tables(db: aiosqlite.Connection):
             location TEXT,
             sub_dept TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(dept_code, doctor_name)
+            UNIQUE(hospital_code, dept_code, doctor_name)
         );
 
         CREATE TABLE IF NOT EXISTS user_state (

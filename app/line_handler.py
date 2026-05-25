@@ -9,7 +9,7 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from app.config import DEPARTMENTS, LINE_CHANNEL_ACCESS_TOKEN
+from app.config import DEPARTMENTS, HOSPITALS, HOSPITAL_CODE_TO_NAME, LINE_CHANNEL_ACCESS_TOKEN
 from app.database import get_db
 from app.scraper import fetch_progress, format_progress_message, _get_current_time_code, TIME_CODE_LABELS
 
@@ -17,22 +17,36 @@ logger = logging.getLogger(__name__)
 
 _config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
+HOSPITAL_LIST_TEXT = (
+    "🏥 可查詢的醫院：\n\n"
+    + "\n".join(f"  {i}. {name}" for i, name in enumerate(HOSPITALS, 1))
+    + "\n\n輸入醫院編號或名稱即可選擇"
+)
+
+DEPT_LIST_TEXT = (
+    "🏥 可查詢的科別：\n\n"
+    + "\n".join(f"  • {name}" for name in DEPARTMENTS)
+    + "\n\n輸入科別名稱即可查詢"
+)
+
 WELCOME_TEXT = (
-    "👋 嗨！我是林口長庚看診進度小幫手！\n\n"
+    "👋 嗨！我是長庚看診進度小幫手！\n\n"
     "我可以幫你：\n"
-    "1️⃣ 即時查詢看診進度\n"
+    "1️⃣ 即時查詢各院區看診進度\n"
     "2️⃣ 訂閱通知，快到你的號碼時自動提醒\n\n"
     "━━━━━━━━━━━━━━━\n"
     "📌 快速開始：\n\n"
     "🔍 查詢進度\n"
-    "  直接輸入科別，例如：\n"
-    "  「內科」「外科」「中醫」\n\n"
+    "  輸入醫院名稱，例如：\n"
+    "  「林口長庚」「高雄長庚」「台北長庚」\n"
+    "  ➜ 再輸入科別即可查看進度\n\n"
     "🔔 訂閱通知\n"
     "  輸入「訂閱」\n"
-    "  ➜ 選科別 ➜ 選醫師 ➜ 輸入你的號碼\n"
+    "  ➜ 選醫院 ➜ 選科別 ➜ 選醫師 ➜ 輸入號碼\n"
     "  設定完成後，有進度更新就會通知你！\n\n"
     "━━━━━━━━━━━━━━━\n"
     "📖 所有指令：\n"
+    "  「醫院」查看所有院區\n"
     "  「科別」查看所有科別\n"
     "  「狀態」查看我的訂閱\n"
     "  「取消」取消訂閱\n"
@@ -41,11 +55,7 @@ WELCOME_TEXT = (
 
 HELP_TEXT = WELCOME_TEXT
 
-DEPT_LIST_TEXT = (
-    "🏥 可查詢的科別：\n\n"
-    + "\n".join(f"  • {name}" for name in DEPARTMENTS if name not in ("COVID-19服務", "類流感暨COVID-19新冠門診"))
-    + "\n\n直接輸入科別名稱即可查詢看診進度"
-)
+_hospital_names = list(HOSPITALS.keys())
 
 
 async def handle_text_message(user_id: str, text: str) -> str:
@@ -53,7 +63,6 @@ async def handle_text_message(user_id: str, text: str) -> str:
     text = text.strip()
     db = await get_db()
 
-    # Check user conversation state
     cursor = await db.execute(
         "SELECT state, context FROM user_state WHERE user_id = ?", (user_id,)
     )
@@ -61,10 +70,15 @@ async def handle_text_message(user_id: str, text: str) -> str:
     state = row["state"] if row else "IDLE"
     context = json.loads(row["context"]) if row else {}
 
-    # Commands that work in any state
+    # --- Global commands (work in any state) ---
+
     if text in ("幫助", "help", "？", "?", "小幫手"):
         await _set_state(db, user_id, "IDLE", {})
         return WELCOME_TEXT
+
+    if text in ("醫院", "院區", "醫院列表"):
+        await _set_state(db, user_id, "IDLE", {})
+        return HOSPITAL_LIST_TEXT
 
     if text in ("科別", "看科別", "科別列表"):
         await _set_state(db, user_id, "IDLE", {})
@@ -77,12 +91,16 @@ async def handle_text_message(user_id: str, text: str) -> str:
         return await _handle_status(db, user_id)
 
     if text == "訂閱":
-        await _set_state(db, user_id, "WAITING_DEPT", {})
-        return "請輸入要訂閱的科別名稱，例如：「中醫」「內科」\n\n" + DEPT_LIST_TEXT
+        await _set_state(db, user_id, "SUB_WAITING_HOSPITAL", {})
+        return "請選擇要訂閱的醫院：\n\n" + HOSPITAL_LIST_TEXT
 
-    # State machine
-    if state == "WAITING_DEPT":
-        return await _handle_waiting_dept(db, user_id, text)
+    # --- State machine ---
+
+    if state == "SUB_WAITING_HOSPITAL":
+        return await _handle_sub_hospital(db, user_id, text)
+
+    if state == "SUB_WAITING_DEPT":
+        return await _handle_sub_dept(db, user_id, text, context)
 
     if state == "WAITING_DOCTOR":
         return await _handle_waiting_doctor(db, user_id, text, context)
@@ -90,37 +108,50 @@ async def handle_text_message(user_id: str, text: str) -> str:
     if state == "WAITING_NUMBER":
         return await _handle_waiting_number(db, user_id, text, context)
 
-    # Default: try to match a department name for quick query
+    if state == "QUERY_WAITING_DEPT":
+        return await _handle_query_dept_state(db, user_id, text, context)
+
+    # --- Default: try matching hospital name for quick query ---
+
+    hospital_code = _match_hospital(text)
+    if hospital_code:
+        hospital_name = HOSPITAL_CODE_TO_NAME[hospital_code]
+        context = {"hospital_code": hospital_code, "hospital_name": hospital_name}
+        await _set_state(db, user_id, "QUERY_WAITING_DEPT", context)
+        return (
+            f"🏥 {hospital_name}\n\n"
+            f"請輸入要查詢的科別：\n\n"
+            + DEPT_LIST_TEXT
+        )
+
+    # Try matching department name (use last hospital or default to 林口)
     dept_code = _match_department(text)
     if dept_code:
-        return await _handle_query_dept(text, dept_code)
+        return await _handle_quick_query(db, user_id, text, dept_code)
 
     return (
-        "我不太理解你的意思 😅\n"
-        "輸入「幫助」查看可用指令\n"
-        "或直接輸入科別名稱（如「內科」）查詢看診進度"
+        "我不太理解你的意思 😅\n\n"
+        "💡 試試看：\n"
+        "  • 輸入醫院名稱（如「林口長庚」）\n"
+        "  • 輸入科別名稱（如「內科」）\n"
+        "  • 輸入「小幫手」查看完整說明"
     )
 
 
-async def _handle_query_dept(dept_name: str, dept_code: str) -> str:
-    """Query and return progress for a department."""
-    time_code = _get_current_time_code()
-    try:
-        doctors = await fetch_progress(dept_code, time_code)
-    except Exception:
-        logger.exception("Failed to fetch progress")
-        return "抱歉，目前無法取得看診進度，請稍後再試。"
+# ========== Quick Query ==========
 
-    return format_progress_message(dept_name, time_code, doctors)
+async def _handle_quick_query(db, user_id: str, text: str, dept_code: str) -> str:
+    """Quick query: if user has a previous hospital context, use it; otherwise default to 林口."""
+    cursor = await db.execute(
+        "SELECT context FROM user_state WHERE user_id = ?", (user_id,)
+    )
+    row = await cursor.fetchone()
+    prev_context = json.loads(row["context"]) if row else {}
 
-
-async def _handle_waiting_dept(db, user_id: str, text: str) -> str:
-    dept_code = _match_department(text)
-    if not dept_code:
-        return f"找不到「{text}」這個科別。\n請重新輸入，或輸入「科別」查看所有科別。"
+    hospital_code = prev_context.get("hospital_code", "3")
+    hospital_name = HOSPITAL_CODE_TO_NAME.get(hospital_code, "林口長庚")
 
     dept_name = text
-    # Normalize dept_name
     for name, code in DEPARTMENTS.items():
         if code == dept_code:
             dept_name = name
@@ -128,17 +159,88 @@ async def _handle_waiting_dept(db, user_id: str, text: str) -> str:
 
     time_code = _get_current_time_code()
     try:
-        doctors = await fetch_progress(dept_code, time_code)
+        doctors = await fetch_progress(hospital_code, dept_code, time_code)
+    except Exception:
+        logger.exception("Failed to fetch progress")
+        return "抱歉，目前無法取得看診進度，請稍後再試。"
+
+    return format_progress_message(hospital_name, dept_name, time_code, doctors)
+
+
+async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -> str:
+    """User selected a hospital, now waiting for department."""
+    dept_code = _match_department(text)
+    if not dept_code:
+        return f"找不到「{text}」這個科別。\n請重新輸入，或輸入「科別」查看所有科別。"
+
+    hospital_code = context["hospital_code"]
+    hospital_name = context["hospital_name"]
+
+    dept_name = text
+    for name, code in DEPARTMENTS.items():
+        if code == dept_code:
+            dept_name = name
+            break
+
+    # Keep hospital context for future quick queries
+    await _set_state(db, user_id, "IDLE", {"hospital_code": hospital_code, "hospital_name": hospital_name})
+
+    time_code = _get_current_time_code()
+    try:
+        doctors = await fetch_progress(hospital_code, dept_code, time_code)
+    except Exception:
+        logger.exception("Failed to fetch progress")
+        return "抱歉，目前無法取得看診進度，請稍後再試。"
+
+    return format_progress_message(hospital_name, dept_name, time_code, doctors)
+
+
+# ========== Subscribe Flow ==========
+
+async def _handle_sub_hospital(db, user_id: str, text: str) -> str:
+    """Subscribe step 1: select hospital."""
+    hospital_code = _match_hospital(text)
+    if not hospital_code:
+        return f"找不到「{text}」這間醫院。\n請重新輸入，或輸入「醫院」查看所有院區。"
+
+    hospital_name = HOSPITAL_CODE_TO_NAME[hospital_code]
+    context = {"hospital_code": hospital_code, "hospital_name": hospital_name}
+    await _set_state(db, user_id, "SUB_WAITING_DEPT", context)
+
+    return (
+        f"✅ 已選擇 {hospital_name}\n\n"
+        f"請輸入要訂閱的科別：\n\n"
+        + DEPT_LIST_TEXT
+    )
+
+
+async def _handle_sub_dept(db, user_id: str, text: str, context: dict) -> str:
+    """Subscribe step 2: select department, then show doctors."""
+    dept_code = _match_department(text)
+    if not dept_code:
+        return f"找不到「{text}」這個科別。\n請重新輸入，或輸入「科別」查看所有科別。"
+
+    hospital_code = context["hospital_code"]
+    hospital_name = context["hospital_name"]
+
+    dept_name = text
+    for name, code in DEPARTMENTS.items():
+        if code == dept_code:
+            dept_name = name
+            break
+
+    time_code = _get_current_time_code()
+    try:
+        doctors = await fetch_progress(hospital_code, dept_code, time_code)
     except Exception:
         logger.exception("Failed to fetch progress")
         return "抱歉，目前無法取得看診進度，請稍後再試。"
 
     if not doctors:
         time_label = TIME_CODE_LABELS.get(time_code, "")
-        return f"{dept_name}（{time_label}）目前沒有看診資料。\n請確認是否在看診時段內。"
+        return f"{hospital_name} {dept_name}（{time_label}）目前沒有看診資料。\n請確認是否在看診時段內。"
 
-    # Show doctors and ask user to pick one
-    context = {
+    context.update({
         "dept_code": dept_code,
         "dept_name": dept_name,
         "time_code": time_code,
@@ -146,10 +248,10 @@ async def _handle_waiting_dept(db, user_id: str, text: str) -> str:
             {"name": d.doctor_name, "sub_dept": d.sub_dept, "current": d.current_number}
             for d in doctors
         ],
-    }
+    })
     await _set_state(db, user_id, "WAITING_DOCTOR", context)
 
-    lines = [f"📋 {dept_name} 目前看診的醫師：\n"]
+    lines = [f"📋 {hospital_name} {dept_name} 目前看診的醫師：\n"]
     for i, d in enumerate(doctors, 1):
         status = f"看到第 {d.current_number} 號" if d.current_number else "尚未開始"
         lines.append(f"  {i}. {d.sub_dept} - {d.doctor_name}（{status}）")
@@ -159,15 +261,14 @@ async def _handle_waiting_dept(db, user_id: str, text: str) -> str:
 
 
 async def _handle_waiting_doctor(db, user_id: str, text: str, context: dict) -> str:
+    """Subscribe step 3: select doctor."""
     doctors = context.get("doctors", [])
 
     selected = None
-    # Try matching by number
     if text.isdigit():
         idx = int(text) - 1
         if 0 <= idx < len(doctors):
             selected = doctors[idx]
-    # Try matching by name
     if not selected:
         for d in doctors:
             if text in d["name"] or d["name"] in text:
@@ -193,6 +294,7 @@ async def _handle_waiting_doctor(db, user_id: str, text: str, context: dict) -> 
 
 
 async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> str:
+    """Subscribe step 4: enter appointment number."""
     if not text.isdigit():
         return "請輸入數字的看診號碼，例如：「25」"
 
@@ -201,16 +303,17 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
         return "號碼必須大於 0，請重新輸入。"
 
     doctor_name = context["selected_doctor"]
+    hospital_code = context["hospital_code"]
+    hospital_name = context["hospital_name"]
     dept_code = context["dept_code"]
     dept_name = context["dept_name"]
     sub_dept = context.get("selected_sub_dept", "")
 
-    # Save subscription
     await db.execute(
         """
-        INSERT INTO subscriptions (user_id, dept_code, dept_name, doctor_name, appointment_number, last_notified_number)
-        VALUES (?, ?, ?, ?, ?, 0)
-        ON CONFLICT(user_id, doctor_name)
+        INSERT INTO subscriptions (user_id, hospital_code, hospital_name, dept_code, dept_name, doctor_name, appointment_number, last_notified_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(user_id, hospital_code, doctor_name)
         DO UPDATE SET
             dept_code = excluded.dept_code,
             dept_name = excluded.dept_name,
@@ -218,13 +321,12 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
             last_notified_number = 0,
             created_at = CURRENT_TIMESTAMP
         """,
-        (user_id, dept_code, dept_name, doctor_name, appointment_number),
+        (user_id, hospital_code, hospital_name, dept_code, dept_name, doctor_name, appointment_number),
     )
     await db.commit()
 
-    await _set_state(db, user_id, "IDLE", {})
+    await _set_state(db, user_id, "IDLE", {"hospital_code": hospital_code, "hospital_name": hospital_name})
 
-    # Calculate remaining
     current = 0
     for d in context.get("doctors", []):
         if d["name"] == doctor_name:
@@ -241,6 +343,7 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
 
     return (
         f"✅ 訂閱成功！\n\n"
+        f"🏥 {hospital_name}\n"
         f"科別：{sub_dept}\n"
         f"醫師：{doctor_name}\n"
         f"你的號碼：{appointment_number} 號\n"
@@ -250,9 +353,11 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
     )
 
 
+# ========== Cancel / Status ==========
+
 async def _handle_cancel(db, user_id: str) -> str:
     cursor = await db.execute(
-        "SELECT id, doctor_name, dept_name, appointment_number FROM subscriptions WHERE user_id = ?",
+        "SELECT id, hospital_name, doctor_name, dept_name, appointment_number FROM subscriptions WHERE user_id = ?",
         (user_id,),
     )
     subs = await cursor.fetchall()
@@ -267,7 +372,7 @@ async def _handle_cancel(db, user_id: str) -> str:
 
     lines = ["✅ 已取消以下訂閱：\n"]
     for s in subs:
-        lines.append(f"  • {s['dept_name']} - {s['doctor_name']}（{s['appointment_number']} 號）")
+        lines.append(f"  • {s['hospital_name']} {s['dept_name']} - {s['doctor_name']}（{s['appointment_number']} 號）")
 
     return "\n".join(lines)
 
@@ -275,10 +380,13 @@ async def _handle_cancel(db, user_id: str) -> str:
 async def _handle_status(db, user_id: str) -> str:
     cursor = await db.execute(
         """
-        SELECT s.doctor_name, s.dept_name, s.appointment_number,
+        SELECT s.hospital_name, s.doctor_name, s.dept_name, s.appointment_number,
                c.current_number, c.sub_dept
         FROM subscriptions s
-        LEFT JOIN clinic_status c ON s.dept_code = c.dept_code AND s.doctor_name = c.doctor_name
+        LEFT JOIN clinic_status c
+            ON s.hospital_code = c.hospital_code
+            AND s.dept_code = c.dept_code
+            AND s.doctor_name = c.doctor_name
         WHERE s.user_id = ?
         """,
         (user_id,),
@@ -293,8 +401,8 @@ async def _handle_status(db, user_id: str) -> str:
         current = s["current_number"] or 0
         appt = s["appointment_number"]
         doctor = s["doctor_name"]
-        dept = s["dept_name"]
-        sub_dept = s["sub_dept"] or dept
+        hospital = s["hospital_name"]
+        sub_dept = s["sub_dept"] or s["dept_name"]
 
         if current > 0:
             remaining = appt - current
@@ -305,6 +413,7 @@ async def _handle_status(db, user_id: str) -> str:
         else:
             status = "尚未開始看診"
 
+        lines.append(f"🏥 {hospital}")
         lines.append(f"🔹 {sub_dept} - {doctor}")
         lines.append(f"   你的號碼：{appt} 號")
         lines.append(f"   {status}")
@@ -312,6 +421,8 @@ async def _handle_status(db, user_id: str) -> str:
 
     return "\n".join(lines).strip()
 
+
+# ========== Utilities ==========
 
 async def _set_state(db, user_id: str, state: str, context: dict):
     await db.execute(
@@ -326,13 +437,29 @@ async def _set_state(db, user_id: str, state: str, context: dict):
     await db.commit()
 
 
+def _match_hospital(text: str) -> str | None:
+    """Fuzzy match user input to a hospital code."""
+    if text in HOSPITALS:
+        return HOSPITALS[text]
+
+    # Match by number in list
+    if text.isdigit():
+        idx = int(text) - 1
+        if 0 <= idx < len(_hospital_names):
+            return HOSPITALS[_hospital_names[idx]]
+
+    for name, code in HOSPITALS.items():
+        if text in name or name in text:
+            return code
+
+    return None
+
+
 def _match_department(text: str) -> str | None:
     """Fuzzy match user input to a department code."""
-    # Exact match
     if text in DEPARTMENTS:
         return DEPARTMENTS[text]
 
-    # Partial match
     for name, code in DEPARTMENTS.items():
         if text in name or name in text:
             return code

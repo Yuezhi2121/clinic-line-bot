@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,38 +16,35 @@ async def check_and_notify():
     try:
         db = await get_db()
 
-        # Find all unique dept_codes that have active subscriptions
         cursor = await db.execute(
-            "SELECT DISTINCT dept_code FROM subscriptions"
+            "SELECT DISTINCT hospital_code, dept_code FROM subscriptions"
         )
-        dept_rows = await cursor.fetchall()
+        rows = await cursor.fetchall()
 
-        if not dept_rows:
+        if not rows:
             return
 
-        for dept_row in dept_rows:
-            dept_code = dept_row["dept_code"]
-            await _check_dept(db, dept_code)
+        for row in rows:
+            await _check_dept(db, row["hospital_code"], row["dept_code"])
 
     except Exception:
         logger.exception("Error in check_and_notify")
 
 
-async def _check_dept(db, dept_code: str):
-    """Check a single department and notify relevant subscribers."""
+async def _check_dept(db, hospital_code: str, dept_code: str):
+    """Check a single hospital+department and notify relevant subscribers."""
     try:
-        doctors = await fetch_progress(dept_code)
+        doctors = await fetch_progress(hospital_code, dept_code)
     except Exception:
-        logger.exception("Failed to fetch progress for dept %s", dept_code)
+        logger.exception("Failed to fetch progress for hospital %s dept %s", hospital_code, dept_code)
         return
 
     for doc in doctors:
-        # Update clinic_status
         await db.execute(
             """
-            INSERT INTO clinic_status (dept_code, doctor_name, current_number, next_number, location, sub_dept, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(dept_code, doctor_name)
+            INSERT INTO clinic_status (hospital_code, dept_code, doctor_name, current_number, next_number, location, sub_dept, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(hospital_code, dept_code, doctor_name)
             DO UPDATE SET
                 current_number = excluded.current_number,
                 next_number = excluded.next_number,
@@ -56,17 +52,16 @@ async def _check_dept(db, dept_code: str):
                 sub_dept = excluded.sub_dept,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (dept_code, doc.doctor_name, doc.current_number, doc.next_number, doc.location, doc.sub_dept),
+            (hospital_code, dept_code, doc.doctor_name, doc.current_number, doc.next_number, doc.location, doc.sub_dept),
         )
 
-        # Find subscribers for this doctor
         cursor = await db.execute(
             """
-            SELECT id, user_id, appointment_number, last_notified_number
+            SELECT id, user_id, appointment_number, last_notified_number, hospital_name
             FROM subscriptions
-            WHERE dept_code = ? AND doctor_name = ?
+            WHERE hospital_code = ? AND dept_code = ? AND doctor_name = ?
             """,
-            (dept_code, doc.doctor_name),
+            (hospital_code, dept_code, doc.doctor_name),
         )
         subs = await cursor.fetchall()
 
@@ -74,22 +69,21 @@ async def _check_dept(db, dept_code: str):
             if doc.current_number == 0:
                 continue
 
-            # Only notify if the number has changed since last notification
             if doc.current_number == sub["last_notified_number"]:
                 continue
 
             remaining = sub["appointment_number"] - doc.current_number
-            # Auto-remove subscription if already passed
             if remaining < -5:
                 await db.execute("DELETE FROM subscriptions WHERE id = ?", (sub["id"],))
                 await push_text(
                     sub["user_id"],
-                    f"你的號碼 {sub['appointment_number']} 號已過號較久，已自動取消訂閱 {doc.doctor_name} 醫師。",
+                    f"你的號碼 {sub['appointment_number']} 號已過號較久，"
+                    f"已自動取消訂閱 {sub['hospital_name']} {doc.doctor_name} 醫師。",
                 )
                 continue
 
             msg = build_update_message(
-                doc.doctor_name, doc.sub_dept,
+                sub["hospital_name"], doc.doctor_name, doc.sub_dept,
                 doc.current_number, sub["appointment_number"],
             )
             await push_text(sub["user_id"], msg)

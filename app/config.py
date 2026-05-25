@@ -7,18 +7,28 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
-CGMH_PROGRESS_URL = "https://register.cgmh.org.tw/Progress/3"
-HOSPITAL_CODE = "3"
+CGMH_PROGRESS_BASE_URL = "https://register.cgmh.org.tw/Progress"
 
 SCRAPE_INTERVAL_SECONDS = 60
 
+HOSPITALS = {
+    "基隆長庚": "2",
+    "情人湖院區": "E",
+    "台北長庚": "1",
+    "長庚診所": "B",
+    "土城醫院": "V",
+    "林口長庚": "3",
+    "桃園長庚": "5",
+    "雲林長庚": "M",
+    "嘉義長庚": "6",
+    "高雄長庚": "8",
+    "鳳山醫院": "T",
+}
+
+HOSPITAL_CODE_TO_NAME = {v: k for k, v in HOSPITALS.items()}
+
+# Common departments across all CGMH branches
 DEPARTMENTS = {
-    "COVID-19服務": "00",
-    "質子諮詢門診": "12",
-    "核素治療諮詢門診": "20",
-    "細胞治療諮詢門診": "17",
-    "ROSA機器人手術系統諮詢門診": "18",
-    "類流感暨COVID-19新冠門診": "01",
     "內科": "02",
     "外科": "03",
     "牙科": "04",

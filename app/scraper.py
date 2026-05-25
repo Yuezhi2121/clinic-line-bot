@@ -5,7 +5,7 @@ from datetime import datetime
 import httpx
 from bs4 import BeautifulSoup
 
-from app.config import CGMH_PROGRESS_URL
+from app.config import CGMH_PROGRESS_BASE_URL, HOSPITAL_CODE_TO_NAME
 
 
 @dataclass
@@ -21,30 +21,32 @@ def _get_current_time_code() -> str:
     """Auto-detect time period based on current hour."""
     hour = datetime.now().hour
     if hour < 12:
-        return "1"  # 上午診
+        return "1"
     elif hour < 17:
-        return "2"  # 下午診
+        return "2"
     else:
-        return "3"  # 晚間
+        return "3"
 
 
 TIME_CODE_LABELS = {"1": "上午診", "2": "下午診", "3": "晚間"}
 
 
 async def fetch_progress(
-    dept_code: str, time_code: str | None = None
+    hospital_code: str, dept_code: str, time_code: str | None = None
 ) -> list[DoctorProgress]:
-    """Fetch consultation progress for a department from CGMH Linkou."""
+    """Fetch consultation progress for a department from a CGMH hospital."""
     if time_code is None:
         time_code = _get_current_time_code()
 
+    url = f"{CGMH_PROGRESS_BASE_URL}/{hospital_code}"
+
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
-            CGMH_PROGRESS_URL,
+            url,
             data={"dept": dept_code, "time": time_code},
             headers={
                 "User-Agent": "Mozilla/5.0",
-                "Referer": CGMH_PROGRESS_URL,
+                "Referer": url,
             },
         )
         resp.raise_for_status()
@@ -55,7 +57,6 @@ async def fetch_progress(
 def _parse_progress_html(html: str) -> list[DoctorProgress]:
     soup = BeautifulSoup(html, "html.parser")
 
-    # The first table in divDeptResult contains the progress data
     result_div = soup.find("div", id="divDeptResult")
     if not result_div:
         tables = soup.find_all("table")
@@ -105,14 +106,14 @@ def _parse_number(raw: str) -> int:
 
 
 def format_progress_message(
-    dept_name: str, time_code: str, doctors: list[DoctorProgress]
+    hospital_name: str, dept_name: str, time_code: str, doctors: list[DoctorProgress]
 ) -> str:
     """Format progress data into a readable LINE message."""
     time_label = TIME_CODE_LABELS.get(time_code, "")
     if not doctors:
-        return f"目前 {dept_name}（{time_label}）沒有看診資料。"
+        return f"目前 {hospital_name} {dept_name}（{time_label}）沒有看診資料。"
 
-    lines = [f"📋 林口長庚 {dept_name}（{time_label}）看診進度\n"]
+    lines = [f"📋 {hospital_name} {dept_name}（{time_label}）看診進度\n"]
     for d in doctors:
         status = f"目前第 {d.current_number} 號" if d.current_number else "尚未開始"
         next_info = f"（下一位：{d.next_number}）" if d.next_number else ""

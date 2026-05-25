@@ -31,6 +31,7 @@ async def push_text(user_id: str, text: str):
 
 
 def build_update_message(
+    hospital_name: str,
     doctor_name: str,
     sub_dept: str,
     current_number: int,
@@ -42,6 +43,7 @@ def build_update_message(
     if remaining <= 0:
         return (
             f"🔔 已經輪到你了！\n"
+            f"🏥 {hospital_name}\n"
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
@@ -50,6 +52,7 @@ def build_update_message(
     elif remaining <= 3:
         return (
             f"⚡ 快輪到你了！\n"
+            f"🏥 {hospital_name}\n"
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
@@ -58,6 +61,7 @@ def build_update_message(
     else:
         return (
             f"📢 看診進度更新\n"
+            f"🏥 {hospital_name}\n"
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
