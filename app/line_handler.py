@@ -169,14 +169,16 @@ async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -
         doctors = await scraper.fetch_progress(branch_code, dept_code, time_code)
     except Exception:
         logger.exception("Failed to fetch progress")
-        return "抱歉，目前無法取得看診進度，請稍後再試。"
+        ts = tw_now().strftime("%H:%M")
+        return f"抱歉，目前無法取得看診進度，請稍後再試。\n🕐 {ts}"
 
     if not doctors:
         time_label = TIME_CODE_LABELS.get(time_code, "")
+        ts = tw_now().strftime("%H:%M")
         await _set_state(db, user_id, "IDLE", {
             "hospital_code": hospital_code, "hospital_name": hospital_name, "hospital_id": hospital_id
         })
-        return f"目前 {hospital_name} {dept_name}（{time_label}）沒有看診資料。"
+        return f"目前 {hospital_name} {dept_name}（{time_label}）沒有看診資料。\n🕐 查詢時間：{ts}"
 
     context.update({
         "dept_code": dept_code,
@@ -296,11 +298,13 @@ async def _handle_sub_dept(db, user_id: str, text: str, context: dict) -> str:
         doctors = await scraper.fetch_progress(branch_code, dept_code, time_code)
     except Exception:
         logger.exception("Failed to fetch progress")
-        return "抱歉，目前無法取得看診進度，請稍後再試。"
+        ts = tw_now().strftime("%H:%M")
+        return f"抱歉，目前無法取得看診進度，請稍後再試。\n🕐 {ts}"
 
     if not doctors:
         time_label = TIME_CODE_LABELS.get(time_code, "")
-        return f"{hospital_name} {dept_name}（{time_label}）目前沒有看診資料。\n請確認是否在看診時段內。"
+        ts = tw_now().strftime("%H:%M")
+        return f"{hospital_name} {dept_name}（{time_label}）目前沒有看診資料。\n請確認是否在看診時段內。\n🕐 查詢時間：{ts}"
 
     active_doctors = [d for d in doctors if not d.status]
     if not active_doctors:
