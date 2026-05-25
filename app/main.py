@@ -48,13 +48,23 @@ async def health():
 
 
 @app.post("/callback")
-async def callback(request: Request, x_line_signature: str = Header(None)):
+async def callback(request: Request):
+    signature = request.headers.get("X-Line-Signature", "")
     body = (await request.body()).decode("utf-8")
+    logger.info("Webhook received, body length=%d", len(body))
+
+    if not signature:
+        logger.warning("Missing X-Line-Signature header")
+        raise HTTPException(status_code=400, detail="Missing signature")
 
     try:
-        events = parser.parse(body, x_line_signature)
+        events = parser.parse(body, signature)
     except InvalidSignatureError:
+        logger.warning("Invalid signature")
         raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        logger.exception("Error parsing webhook: %s", e)
+        return {"status": "error", "detail": str(e)}
 
     for event in events:
         if isinstance(event, MessageEvent) and isinstance(
@@ -64,8 +74,11 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
             text = event.message.text
             logger.info("Message from %s: %s", user_id, text)
 
-            reply_text = await handle_text_message(user_id, text)
-            reply_message(event.reply_token, reply_text)
+            try:
+                reply_text = await handle_text_message(user_id, text)
+                reply_message(event.reply_token, reply_text)
+            except Exception as e:
+                logger.exception("Error handling message: %s", e)
 
     return {"status": "ok"}
 
