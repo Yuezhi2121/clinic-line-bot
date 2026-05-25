@@ -4,6 +4,7 @@ from app.scrapers.base import HospitalScraper
 from app.scrapers.cch import CCHScraper
 from app.scrapers.cgmh import CGMHScraper
 from app.scrapers.chimei import ChiMeiScraper
+from app.scrapers.jah import JAHScraper
 from app.scrapers.ktgh import KTGHScraper
 from app.scrapers.mmh import MMHScraper
 from app.scrapers.ntuh import NTUHScraper
@@ -41,6 +42,7 @@ _register(ChiMeiScraper())
 _register(CCHScraper())
 _register(KTGHScraper())
 _register(TzuChiScraper())
+_register(JAHScraper())
 
 
 def get_all_hospital_names() -> list[str]:
@@ -69,6 +71,9 @@ _ALIASES: dict[str, str] = {
     "斗六慈濟醫院": "斗六慈濟",
     "關山慈濟醫院": "關山慈濟",
     "馬偕紀念醫院": "馬偕醫院",
+    "仁愛醫院": "大里仁愛醫院",
+    "大里仁愛": "大里仁愛醫院",
+    "台中仁愛": "台中仁愛醫院",
 }
 
 
