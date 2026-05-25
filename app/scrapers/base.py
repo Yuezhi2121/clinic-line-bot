@@ -1,6 +1,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+TW_TZ = timezone(timedelta(hours=8))
+
+
+def tw_now() -> datetime:
+    return datetime.now(TW_TZ)
 
 
 @dataclass
@@ -14,7 +20,7 @@ class DoctorProgress:
 
 
 def get_current_time_code() -> str:
-    hour = datetime.now().hour
+    hour = tw_now().hour
     if hour < 12:
         return "1"
     elif hour < 17:
@@ -59,8 +65,7 @@ class HospitalScraper(ABC):
         self, branch_name: str, dept_name: str, time_code: str, doctors: list[DoctorProgress]
     ) -> str:
         time_label = TIME_CODE_LABELS.get(time_code, "")
-        now = datetime.now()
-        ts = now.strftime("%H:%M")
+        ts = tw_now().strftime("%H:%M")
 
         if not doctors:
             return (

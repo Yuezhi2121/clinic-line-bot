@@ -1,6 +1,5 @@
 import json
 import logging
-from datetime import datetime
 
 from linebot.v3.messaging import (
     ApiClient,
@@ -12,7 +11,7 @@ from linebot.v3.messaging import (
 
 from app.config import LINE_CHANNEL_ACCESS_TOKEN
 from app.database import get_db
-from app.scrapers.base import DoctorProgress, get_current_time_code, TIME_CODE_LABELS
+from app.scrapers.base import DoctorProgress, get_current_time_code, TIME_CODE_LABELS, tw_now
 from app.scrapers.registry import find_hospital, get_all_hospital_names, get_scraper
 
 logger = logging.getLogger(__name__)
@@ -414,7 +413,7 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
     else:
         remaining_text = "醫師尚未開始看診。"
 
-    ts = datetime.now().strftime("%H:%M")
+    ts = tw_now().strftime("%H:%M")
     return (
         f"✅ 訂閱成功！\n\n"
         f"🏥 {hospital_name}\n"
@@ -494,7 +493,7 @@ async def _handle_status(db, user_id: str) -> str:
         lines.append(f"   {status}")
         lines.append("")
 
-    lines.append(f"🕐 查詢時間：{datetime.now().strftime('%H:%M')}")
+    lines.append(f"🕐 查詢時間：{tw_now().strftime('%H:%M')}")
     return "\n".join(lines).strip()
 
 

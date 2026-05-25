@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+
+from app.scrapers.base import tw_now
 
 from linebot.v3.messaging import (
     ApiClient,
@@ -40,7 +41,7 @@ def build_update_message(
 ) -> str:
     """Build a notification message about progress update."""
     remaining = appointment_number - current_number
-    ts = datetime.now().strftime("%H:%M")
+    ts = tw_now().strftime("%H:%M")
 
     if remaining <= 0:
         return (
