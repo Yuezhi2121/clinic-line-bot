@@ -11,7 +11,7 @@ from linebot.v3.messaging import (
 
 from app.config import LINE_CHANNEL_ACCESS_TOKEN
 from app.database import get_db
-from app.scrapers.base import get_current_time_code, TIME_CODE_LABELS
+from app.scrapers.base import DoctorProgress, get_current_time_code, TIME_CODE_LABELS
 from app.scrapers.registry import find_hospital, get_all_hospital_names, get_scraper
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ WELCOME_TEXT = (
     "🔍 查詢進度\n"
     "  輸入醫院名稱，例如：\n"
     "  「林口長庚」「台大總院」「馬偕醫院」「臺安醫院」\n"
-    "  ➜ 再輸入科別即可查看進度\n\n"
+    "  ➜ 輸入科別 ➜ 輸入醫師姓名或診間篩選\n\n"
     "🔔 訂閱通知\n"
     "  輸入「訂閱」\n"
     "  ➜ 選醫院 ➜ 選科別 ➜ 選醫師 ➜ 輸入號碼\n"
@@ -110,6 +110,9 @@ async def handle_text_message(user_id: str, text: str) -> str:
     if state == "QUERY_WAITING_DEPT":
         return await _handle_query_dept_state(db, user_id, text, context)
 
+    if state == "QUERY_WAITING_FILTER":
+        return await _handle_query_filter(db, user_id, text, context)
+
     # --- Default: try matching hospital name ---
 
     entry = _match_hospital(text)
@@ -161,10 +164,6 @@ async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -
     else:
         dept_code = text
 
-    await _set_state(db, user_id, "IDLE", {
-        "hospital_code": hospital_code, "hospital_name": hospital_name, "hospital_id": hospital_id
-    })
-
     time_code = get_current_time_code()
     try:
         doctors = await scraper.fetch_progress(branch_code, dept_code, time_code)
@@ -172,7 +171,88 @@ async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -
         logger.exception("Failed to fetch progress")
         return "抱歉，目前無法取得看診進度，請稍後再試。"
 
-    return scraper.format_progress(hospital_name, dept_name, time_code, doctors)
+    if not doctors:
+        time_label = TIME_CODE_LABELS.get(time_code, "")
+        await _set_state(db, user_id, "IDLE", {
+            "hospital_code": hospital_code, "hospital_name": hospital_name, "hospital_id": hospital_id
+        })
+        return f"目前 {hospital_name} {dept_name}（{time_label}）沒有看診資料。"
+
+    context.update({
+        "dept_code": dept_code,
+        "dept_name": dept_name,
+        "time_code": time_code,
+        "doctors_cache": [
+            {"name": d.doctor_name, "sub_dept": d.sub_dept, "location": d.location,
+             "current": d.current_number, "next": d.next_number}
+            for d in doctors
+        ],
+    })
+    await _set_state(db, user_id, "QUERY_WAITING_FILTER", context)
+
+    time_label = TIME_CODE_LABELS.get(time_code, "")
+    return (
+        f"📋 {hospital_name} {dept_name}（{time_label}）\n"
+        f"共有 {len(doctors)} 位醫師看診中\n\n"
+        f"請輸入以下任一條件來縮小範圍：\n"
+        f"  🔹 醫師姓名（如「王大明」）\n"
+        f"  🔹 門診科系（如「心臟科」）\n"
+        f"  🔹 診間編號（如「03診」）\n\n"
+        f"或輸入「全部」查看所有醫師進度"
+    )
+
+
+async def _handle_query_filter(db, user_id: str, text: str, context: dict) -> str:
+    hospital_code = context["hospital_code"]
+    hospital_name = context["hospital_name"]
+    hospital_id = context.get("hospital_id", "")
+    dept_name = context.get("dept_name", "")
+    time_code = context.get("time_code", "")
+    doctors_cache = context.get("doctors_cache", [])
+
+    scraper = get_scraper(hospital_id)
+    if not scraper:
+        await _set_state(db, user_id, "IDLE", {})
+        return "系統錯誤，請重新選擇醫院。"
+
+    await _set_state(db, user_id, "IDLE", {
+        "hospital_code": hospital_code, "hospital_name": hospital_name, "hospital_id": hospital_id
+    })
+
+    if text in ("全部", "all", "ALL"):
+        all_docs = [
+            DoctorProgress(
+                sub_dept=d["sub_dept"], location=d["location"],
+                doctor_name=d["name"], current_number=d["current"], next_number=d["next"],
+            )
+            for d in doctors_cache
+        ]
+        return scraper.format_progress(hospital_name, dept_name, time_code, all_docs)
+
+    filtered = [
+        d for d in doctors_cache
+        if text in d["name"] or text in d["sub_dept"] or text in d.get("location", "")
+    ]
+
+    if not filtered:
+        all_docs = [
+            DoctorProgress(
+                sub_dept=d["sub_dept"], location=d["location"],
+                doctor_name=d["name"], current_number=d["current"], next_number=d["next"],
+            )
+            for d in doctors_cache
+        ]
+        result = scraper.format_progress(hospital_name, dept_name, time_code, all_docs)
+        return f"找不到符合「{text}」的結果，以下為全部看診進度：\n\n{result}"
+
+    matched_docs = [
+        DoctorProgress(
+            sub_dept=d["sub_dept"], location=d["location"],
+            doctor_name=d["name"], current_number=d["current"], next_number=d["next"],
+        )
+        for d in filtered
+    ]
+    return scraper.format_progress(hospital_name, dept_name, time_code, matched_docs)
 
 
 # ========== Subscribe Flow ==========
