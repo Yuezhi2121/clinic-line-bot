@@ -15,6 +15,7 @@ from app.config import LINE_CHANNEL_SECRET
 from app.database import close_db, get_db
 from app.line_handler import handle_text_message, reply_message, WELCOME_TEXT
 from app.scheduler import start_scheduler, stop_scheduler
+from app.scrapers.browser import close_browser
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down...")
     stop_scheduler()
+    await close_browser()
     await close_db()
 
 
