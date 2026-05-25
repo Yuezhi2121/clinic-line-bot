@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+*.db
+.venv/
+venv/
+node_modules/
+
+# Old Node.js project files
+src/
+package.json
+package-lock.json
+stock-bot
