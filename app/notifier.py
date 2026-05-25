@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from linebot.v3.messaging import (
     ApiClient,
@@ -39,6 +40,7 @@ def build_update_message(
 ) -> str:
     """Build a notification message about progress update."""
     remaining = appointment_number - current_number
+    ts = datetime.now().strftime("%H:%M")
 
     if remaining <= 0:
         return (
@@ -47,7 +49,8 @@ def build_update_message(
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
-            f"請盡速前往診間！"
+            f"請盡速前往診間！\n"
+            f"🕐 {ts}"
         )
     elif remaining <= 3:
         return (
@@ -56,7 +59,8 @@ def build_update_message(
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
-            f"前面還有 {remaining} 位，請準備前往！"
+            f"前面還有 {remaining} 位，請準備前往！\n"
+            f"🕐 {ts}"
         )
     elif remaining <= 5:
         return (
@@ -65,7 +69,8 @@ def build_update_message(
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
-            f"前面還有 {remaining} 位"
+            f"前面還有 {remaining} 位\n"
+            f"🕐 {ts}"
         )
     elif remaining <= 10:
         return (
@@ -74,7 +79,8 @@ def build_update_message(
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
-            f"前面還有 {remaining} 位，可以準備出發"
+            f"前面還有 {remaining} 位，可以準備出發\n"
+            f"🕐 {ts}"
         )
     else:
         return (
@@ -83,5 +89,6 @@ def build_update_message(
             f"{sub_dept} - {doctor_name}\n"
             f"目前看到第 {current_number} 號\n"
             f"你的號碼是 {appointment_number} 號\n"
-            f"前面還有 {remaining} 位"
+            f"前面還有 {remaining} 位\n"
+            f"🕐 {ts}"
         )

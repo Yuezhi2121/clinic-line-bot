@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 
 from linebot.v3.messaging import (
     ApiClient,
@@ -413,6 +414,7 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
     else:
         remaining_text = "醫師尚未開始看診。"
 
+    ts = datetime.now().strftime("%H:%M")
     return (
         f"✅ 訂閱成功！\n\n"
         f"🏥 {hospital_name}\n"
@@ -421,7 +423,8 @@ async def _handle_waiting_number(db, user_id: str, text: str, context: dict) -> 
         f"你的號碼：{appointment_number} 號\n"
         f"{remaining_text}\n\n"
         f"看診進度有更新時會自動通知你。\n"
-        f"輸入「狀態」查看訂閱，輸入「取消」取消訂閱。"
+        f"輸入「狀態」查看訂閱，輸入「取消」取消訂閱。\n"
+        f"🕐 {ts}"
     )
 
 
@@ -491,6 +494,7 @@ async def _handle_status(db, user_id: str) -> str:
         lines.append(f"   {status}")
         lines.append("")
 
+    lines.append(f"🕐 查詢時間：{datetime.now().strftime('%H:%M')}")
     return "\n".join(lines).strip()
 
 
