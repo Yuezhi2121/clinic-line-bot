@@ -44,14 +44,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    from app.config import LINE_CHANNEL_ACCESS_TOKEN
-    return {
-        "status": "ok",
-        "secret_set": bool(LINE_CHANNEL_SECRET),
-        "secret_length": len(LINE_CHANNEL_SECRET),
-        "token_set": bool(LINE_CHANNEL_ACCESS_TOKEN),
-        "token_length": len(LINE_CHANNEL_ACCESS_TOKEN),
-    }
+    return {"status": "ok"}
 
 
 @app.post("/callback")
