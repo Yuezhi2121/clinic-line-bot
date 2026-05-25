@@ -46,16 +46,16 @@ WELCOME_TEXT = (
     "━━━━━━━━━━━━━━━\n"
     "📌 快速開始：\n\n"
     "🔍 查詢進度\n"
-    "  輸入醫院名稱，例如：\n"
-    "  「林口長庚」「台大總院」「奇美醫院」\n"
-    "  「彰基」「光田」「慈濟」\n"
-    "  ➜ 輸入科別 ➜ 輸入醫師姓名或診間篩選\n\n"
+    "  輸入「進度查詢」\n"
+    "  ➜ 選醫院 ➜ 選科別 ➜ 輸入醫師或診間篩選\n\n"
     "🔔 訂閱通知\n"
     "  輸入「訂閱」\n"
     "  ➜ 選醫院 ➜ 選科別 ➜ 選醫師 ➜ 輸入號碼\n"
     "  設定完成後，有進度更新就會通知你！\n\n"
     "━━━━━━━━━━━━━━━\n"
     "📖 所有指令：\n"
+    "  「進度查詢」查詢看診進度\n"
+    "  「訂閱」設定看診通知\n"
     "  「醫院」查看所有可查詢的醫院\n"
     "  「狀態」查看我的訂閱\n"
     "  「取消」取消訂閱\n"
@@ -102,11 +102,18 @@ async def handle_text_message(user_id: str, text: str) -> str:
     if text in ("狀態", "我的訂閱", "查詢訂閱"):
         return await _handle_status(db, user_id)
 
+    if text in ("進度查詢", "查詢進度", "查詢"):
+        await _set_state(db, user_id, "QUERY_WAITING_HOSPITAL", {})
+        return "請選擇要查詢的醫院：\n\n" + HOSPITAL_LIST_TEXT
+
     if text == "訂閱":
         await _set_state(db, user_id, "SUB_WAITING_HOSPITAL", {})
         return "請選擇要訂閱的醫院：\n\n" + HOSPITAL_LIST_TEXT
 
     # --- State machine ---
+
+    if state == "QUERY_WAITING_HOSPITAL":
+        return await _handle_query_hospital(db, user_id, text)
 
     if state == "SUB_WAITING_HOSPITAL":
         return await _handle_sub_hospital(db, user_id, text)
@@ -126,30 +133,34 @@ async def handle_text_message(user_id: str, text: str) -> str:
     if state == "QUERY_WAITING_FILTER":
         return await _handle_query_filter(db, user_id, text, context)
 
-    # --- Default: try matching hospital name ---
-
-    entry = _match_hospital(text)
-    if entry:
-        scraper = entry.scraper
-        hospital_code = f"{scraper.hospital_id}:{entry.branch_code}"
-        ctx = {"hospital_code": hospital_code, "hospital_name": entry.branch_name, "hospital_id": scraper.hospital_id}
-        await _set_state(db, user_id, "QUERY_WAITING_DEPT", ctx)
-        dept_text = _build_dept_list_text(scraper.hospital_id)
-        return (
-            f"🏥 {entry.branch_name}\n\n"
-            f"請輸入要查詢的科別：\n\n"
-            f"{dept_text}"
-        )
-
     return (
         "我不太理解你的意思 😅\n\n"
         "💡 試試看：\n"
-        "  • 輸入醫院名稱（如「林口長庚」「台大總院」「馬偕醫院」）\n"
+        "  • 輸入「進度查詢」查詢看診進度\n"
+        "  • 輸入「訂閱」設定看診通知\n"
         "  • 輸入「小幫手」查看完整說明"
     )
 
 
 # ========== Quick Query ==========
+
+async def _handle_query_hospital(db, user_id: str, text: str) -> str:
+    entry = _match_hospital(text)
+    if not entry:
+        return f"找不到「{text}」這間醫院。\n請重新輸入，或輸入「醫院」查看所有院區。"
+
+    scraper = entry.scraper
+    hospital_code = f"{scraper.hospital_id}:{entry.branch_code}"
+    ctx = {"hospital_code": hospital_code, "hospital_name": entry.branch_name, "hospital_id": scraper.hospital_id}
+    await _set_state(db, user_id, "QUERY_WAITING_DEPT", ctx)
+
+    dept_text = _build_dept_list_text(scraper.hospital_id)
+    return (
+        f"🏥 {entry.branch_name}\n\n"
+        f"請輸入要查詢的科別：\n\n"
+        f"{dept_text}"
+    )
+
 
 async def _handle_query_dept_state(db, user_id: str, text: str, context: dict) -> str:
     hospital_code = context["hospital_code"]
